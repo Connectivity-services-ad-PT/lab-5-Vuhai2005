@@ -1,3 +1,4 @@
+import http
 import os
 from datetime import datetime, timezone
 from enum import Enum
@@ -18,8 +19,8 @@ app = FastAPI(
     title="FIT4110 Lab 05 - IoT Ingestion Service",
     version=SERVICE_VERSION,
     description=(
-        "IoT Ingestion API chạy trong ngữ cảnh Docker Compose cho Lab 05. "
-        "Luồng logic được kế thừa từ Lab 04 và tiếp tục được dùng để kiểm thử end‑to‑end."
+        "IoT Ingestion API chạy trong ngữ cảnh Docker Compose cho Lab 05. "
+        "Luồng logic được kế thừa từ Lab 04 và tiếp tục được dùng để kiểm thử end‑to‑end."
     ),
 )
 
@@ -59,7 +60,7 @@ class SensorReadingCreate(BaseModel):
         ...,
         ge=-40,
         le=80,
-        description="Boundary range used in Lab 03 và Lab 04: -40 đến 80.",
+        description="Boundary range used in Lab 03 và Lab 04: -40 đến 80.",
         examples=[31.5],
     )
     unit: Optional[SensorUnit] = Field(default=None, examples=["celsius"])
@@ -111,18 +112,21 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
     if isinstance(exc.detail, dict):
         problem = exc.detail
     else:
+        # Sử dụng http.HTTPStatus để tra cứu mô tả chuẩn từ status_code (ví dụ: 401 -> Unauthorized)
+        try:
+            status_phrase = http.HTTPStatus(exc.status_code).phrase
+        except ValueError:
+            status_phrase = "HTTP Error"
+
+        p_type = "https://smart-campus.local/problems/unauthorized" if exc.status_code == 401 else "about:blank"
+        
         problem = build_problem(
             status_code=exc.status_code,
-            title=status.HTTP_STATUS_CODES.get(exc.status_code, "HTTP Error"),
+            title=status_phrase,
             detail=str(exc.detail),
             instance=str(request.url.path),
+            problem_type=p_type
         )
-
-    problem.setdefault("status", exc.status_code)
-    problem.setdefault("title", status.HTTP_STATUS_CODES.get(exc.status_code, "HTTP Error"))
-    problem.setdefault("type", "about:blank")
-    problem.setdefault("detail", "Request failed")
-    problem.setdefault("instance", str(request.url.path))
 
     return JSONResponse(
         status_code=exc.status_code,
@@ -158,24 +162,14 @@ def verify_bearer_token(authorization: Optional[str] = Header(default=None)) -> 
     if not authorization:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=build_problem(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                title="Unauthorized",
-                detail="Missing Authorization header",
-                problem_type="https://smart-campus.local/problems/unauthorized",
-            ),
+            detail="Missing Authorization header",
         )
 
     expected = f"Bearer {AUTH_TOKEN}"
     if authorization != expected:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=build_problem(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                title="Unauthorized",
-                detail="Invalid bearer token",
-                problem_type="https://smart-campus.local/problems/unauthorized",
-            ),
+            detail="Invalid bearer token",
         )
 
 
@@ -209,7 +203,6 @@ def health() -> HealthResponse:
     },
 )
 def create_reading(payload: SensorReadingCreate, response: Response) -> SensorReadingCreated:
-    # Ví dụ logic cảnh báo: nếu nhiệt độ >= 70 thì thêm header cảnh báo
     if payload.metric == SensorMetric.temperature and payload.value >= 70:
         response.headers["X-Warning"] = "high-temperature"
 
